@@ -1,0 +1,499 @@
+# meta developer: @your_channel
+# meta banner: https://example.com/banner.png
+# meta pic: https://example.com/pic.png
+
+__version__ = (1, 0, 0)
+
+import asyncio
+import time
+from telethon import TelegramClient
+from telethon.tl.types import Message
+from .. import loader, utils
+from ..inline.types import InlineCall
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+@loader.tds
+class AnimatorModule(loader.Module):
+    """Модуль анимаций с настройкой через inline бота"""
+
+    strings = {
+        "name": "Animator",
+        "no_args": "❌ <b>Использование:</b> <code>.anim [emoji/text] [контент] [время]</code>",
+        "invalid_type": "❌ <b>Тип должен быть 'emoji' или 'text'</b>",
+        "invalid_time": "❌ <b>Время должно быть числом от 1 до 30 секунд</b>",
+        "animation_done": "✅ <b>Анимация завершена!</b>",
+        "bot_created": "🤖 <b>Бот для настройки создан!</b>\nОткройте: @{}",
+        "settings_saved": "✅ <b>Настройки сохранены!</b>",
+    }
+
+    strings_ru = {
+        "name": "Animator",
+        "no_args": "❌ <b>Использование:</b> <code>.anim [emoji/text] [контент] [время]</code>",
+        "invalid_type": "❌ <b>Тип должен быть 'emoji' или 'text'</b>",
+        "invalid_time": "❌ <b>Время должно быть числом от 1 до 30 секунд</b>",
+        "animation_done": "✅ <b>Анимация завершена!</b>",
+        "bot_created": "🤖 <b>Бот для настройки создан!</b>\nОткройте: @{}",
+        "settings_saved": "✅ <b>Настройки сохранены!</b>",
+    }
+
+    def __init__(self):
+        self.config = loader.ModuleConfig(
+            loader.ConfigValue(
+                "animation_style",
+                "typewriter",
+                "Стиль анимации",
+                validator=loader.validators.Choice(
+                    ["typewriter", "wave", "bounce", "fade", "glitch", "matrix", "rainbow"]
+                ),
+            ),
+            loader.ConfigValue(
+                "speed_multiplier",
+                1.0,
+                "Множитель скорости анимации",
+                validator=loader.validators.Float(minimum=0.1, maximum=5.0),
+            ),
+            loader.ConfigValue(
+                "loop_animation",
+                False,
+                "Зациклить анимацию",
+                validator=loader.validators.Boolean(),
+            ),
+            loader.ConfigValue(
+                "end_message",
+                "",
+                "Сообщение после завершения анимации (пусто = оставить последний кадр)",
+            ),
+            loader.ConfigValue(
+                "frame_delay",
+                0.3,
+                "Задержка между кадрами (секунды)",
+                validator=loader.validators.Float(minimum=0.1, maximum=2.0),
+            ),
+        )
+
+    async def client_ready(self, client: TelegramClient, db):
+        self.client = client
+        self.db = db
+        self._me = await client.get_me()
+        
+        # Инициализация inline бота
+        if hasattr(self, 'inline') and self.inline.bot:
+            bot_username = (await self.inline.bot.get_me()).username
+            logger.info(f"Animator bot ready: @{bot_username}")
+
+    # ==================== СТИЛИ АНИМАЦИЙ ====================
+    
+    def _get_frames_typewriter(self, content: str, is_emoji: bool) -> list:
+        """Эффект печатной машинки"""
+        frames = []
+        if is_emoji:
+            chars = list(content)
+        else:
+            chars = list(content)
+        
+        current = ""
+        for char in chars:
+            current += char
+            frames.append(current + "▌")
+        frames.append(content)
+        return frames
+
+    def _get_frames_wave(self, content: str, is_emoji: bool) -> list:
+        """Волновой эффект"""
+        frames = []
+        chars = list(content)
+        length = len(chars)
+        
+        for i in range(length + 5):
+            frame = ""
+            for j, char in enumerate(chars):
+                if j <= i:
+                    if j == i or j == i - 1:
+                        frame += f"**{char}**"
+                    else:
+                        frame += char
+                else:
+                    frame += "·"
+            frames.append(frame)
+        frames.append(content)
+        return frames
+
+    def _get_frames_bounce(self, content: str, is_emoji: bool) -> list:
+        """Эффект отскока"""
+        frames = []
+        prefixes = ["", " ", "  ", "   ", "  ", " ", ""]
+        
+        for prefix in prefixes * 2:
+            frames.append(f"{prefix}{content}")
+        frames.append(content)
+        return frames
+
+    def _get_frames_fade(self, content: str, is_emoji: bool) -> list:
+        """Эффект появления"""
+        frames = []
+        fade_chars = ["░", "▒", "▓", "█"]
+        
+        for fade in fade_chars:
+            frames.append(fade * len(content))
+        
+        chars = list(content)
+        revealed = ""
+        for char in chars:
+            revealed += char
+            remaining = len(content) - len(revealed)
+            frames.append(revealed + "▓" * remaining)
+        
+        frames.append(content)
+        return frames
+
+    def _get_frames_glitch(self, content: str, is_emoji: bool) -> list:
+        """Глитч эффект"""
+        import random
+        frames = []
+        glitch_chars = ["#", "@", "!", "%", "&", "?", "*", "~"]
+        
+        for intensity in range(5, 0, -1):
+            frame = ""
+            for char in content:
+                if random.random() < intensity * 0.15:
+                    frame += random.choice(glitch_chars)
+                else:
+                    frame += char
+            frames.append(frame)
+        
+        frames.append(content)
+        return frames
+
+    def _get_frames_matrix(self, content: str, is_emoji: bool) -> list:
+        """Матрица эффект"""
+        import random
+        frames = []
+        matrix_chars = "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン"
+        
+        for i in range(8):
+            frame = ""
+            for j, char in enumerate(content):
+                if j < len(content) - i * (len(content) // 8):
+                    frame += random.choice(matrix_chars)
+                else:
+                    frame += char
+            frames.append(frame)
+        
+        frames.append(content)
+        return frames
+
+    def _get_frames_rainbow(self, content: str, is_emoji: bool) -> list:
+        """Радужный эффект с эмодзи"""
+        frames = []
+        rainbow = ["🔴", "🟠", "🟡", "🟢", "🔵", "🟣"]
+        
+        for i in range(len(rainbow) + len(content)):
+            frame = ""
+            for j, char in enumerate(content):
+                if j <= i:
+                    frame += char
+                else:
+                    idx = (i - j) % len(rainbow)
+                    frame += rainbow[idx]
+            frames.append(frame)
+        
+        frames.append(content)
+        return frames
+
+    def _get_frames(self, content: str, is_emoji: bool, style: str) -> list:
+        """Получить кадры анимации по стилю"""
+        style_methods = {
+            "typewriter": self._get_frames_typewriter,
+            "wave": self._get_frames_wave,
+            "bounce": self._get_frames_bounce,
+            "fade": self._get_frames_fade,
+            "glitch": self._get_frames_glitch,
+            "matrix": self._get_frames_matrix,
+            "rainbow": self._get_frames_rainbow,
+        }
+        
+        method = style_methods.get(style, self._get_frames_typewriter)
+        return method(content, is_emoji)
+
+    # ==================== КОМАНДЫ ====================
+
+    @loader.command(ru_doc="[emoji/text] [контент] [время] - Запустить анимацию")
+    async def animcmd(self, message: Message):
+        """[emoji/text] [content] [time] - Run animation"""
+        args = utils.get_args_raw(message)
+        
+        if not args:
+            await utils.answer(message, self.strings["no_args"])
+            return
+
+        parts = args.split(maxsplit=2)
+        
+        if len(parts) < 3:
+            await utils.answer(message, self.strings["no_args"])
+            return
+
+        anim_type, content, duration = parts[0].lower(), parts[1], parts[2]
+
+        if anim_type not in ["emoji", "text"]:
+            await utils.answer(message, self.strings["invalid_type"])
+            return
+
+        try:
+            duration = float(duration)
+            if not 1 <= duration <= 30:
+                raise ValueError
+        except ValueError:
+            await utils.answer(message, self.strings["invalid_time"])
+            return
+
+        is_emoji = anim_type == "emoji"
+        style = self.config["animation_style"]
+        frames = self._get_frames(content, is_emoji, style)
+        
+        if not frames:
+            await utils.answer(message, "❌ Ошибка генерации кадров")
+            return
+
+        frame_delay = duration / len(frames) * self.config["speed_multiplier"]
+        frame_delay = max(0.1, min(frame_delay, self.config["frame_delay"]))
+
+        loop_count = 3 if self.config["loop_animation"] else 1
+        
+        for _ in range(loop_count):
+            for frame in frames:
+                try:
+                    await message.edit(frame)
+                    await asyncio.sleep(frame_delay)
+                except Exception as e:
+                    logger.error(f"Animation error: {e}")
+                    return
+
+        # Финальное сообщение
+        if self.config["end_message"]:
+            await message.edit(self.config["end_message"])
+        else:
+            await message.edit(content)
+
+    @loader.command(ru_doc="Открыть настройки анимаций")
+    async def animsettingscmd(self, message: Message):
+        """Open animation settings"""
+        await self.inline.form(
+            message=message,
+            text=self._get_settings_text(),
+            reply_markup=self._get_settings_markup(),
+        )
+
+    @loader.command(ru_doc="Показать превью всех стилей")
+    async def animpreviewcmd(self, message: Message):
+        """Preview all animation styles"""
+        await utils.answer(message, "🎬 <b>Запуск превью стилей...</b>")
+        
+        test_text = "Hello!"
+        styles = ["typewriter", "wave", "bounce", "fade", "glitch", "matrix", "rainbow"]
+        
+        for style in styles:
+            await message.edit(f"🎬 <b>Стиль:</b> <code>{style}</code>")
+            await asyncio.sleep(1)
+            
+            frames = self._get_frames(test_text, False, style)
+            for frame in frames[:10]:  # Ограничиваем для превью
+                try:
+                    await message.edit(frame)
+                    await asyncio.sleep(0.2)
+                except:
+                    pass
+            
+            await asyncio.sleep(0.5)
+        
+        await message.edit("✅ <b>Превью завершено!</b>")
+
+    @loader.command(ru_doc="Быстрая анимация текста")
+    async def qanimcmd(self, message: Message):
+        """Quick text animation with current settings"""
+        args = utils.get_args_raw(message)
+        
+        if not args:
+            await utils.answer(message, "❌ <b>Укажите текст:</b> <code>.qanim Привет!</code>")
+            return
+
+        style = self.config["animation_style"]
+        frames = self._get_frames(args, False, style)
+        
+        for frame in frames:
+            try:
+                await message.edit(frame)
+                await asyncio.sleep(self.config["frame_delay"])
+            except:
+                pass
+
+    # ==================== INLINE НАСТРОЙКИ ====================
+
+    def _get_settings_text(self) -> str:
+        """Получить текст настроек"""
+        return (
+            "⚙️ <b>Настройки Animator</b>\n\n"
+            f"🎨 <b>Стиль:</b> <code>{self.config['animation_style']}</code>\n"
+            f"⚡ <b>Множитель скорости:</b> <code>{self.config['speed_multiplier']}x</code>\n"
+            f"🔄 <b>Зацикливание:</b> <code>{'Да' if self.config['loop_animation'] else 'Нет'}</code>\n"
+            f"⏱ <b>Задержка кадра:</b> <code>{self.config['frame_delay']}с</code>\n"
+            f"📝 <b>Финальное сообщение:</b> <code>{self.config['end_message'] or 'Последний кадр'}</code>"
+        )
+
+    def _get_settings_markup(self) -> list:
+        """Получить клавиатуру настроек"""
+        return [
+            [
+                {"text": "🎨 Стиль", "callback": self._style_menu},
+                {"text": "⚡ Скорость", "callback": self._speed_menu},
+            ],
+            [
+                {"text": f"🔄 Цикл: {'✅' if self.config['loop_animation'] else '❌'}", 
+                 "callback": self._toggle_loop},
+                {"text": "⏱ Задержка", "callback": self._delay_menu},
+            ],
+            [
+                {"text": "🎬 Превью", "callback": self._preview_callback},
+            ],
+            [
+                {"text": "🔙 Закрыть", "callback": self._close_settings},
+            ],
+        ]
+
+    async def _style_menu(self, call: InlineCall):
+        """Меню выбора стиля"""
+        styles = [
+            ("✍️ Typewriter", "typewriter"),
+            ("🌊 Wave", "wave"),
+            ("🏀 Bounce", "bounce"),
+            ("🌫 Fade", "fade"),
+            ("⚡ Glitch", "glitch"),
+            ("💚 Matrix", "matrix"),
+            ("🌈 Rainbow", "rainbow"),
+        ]
+        
+        buttons = []
+        row = []
+        for name, style in styles:
+            current = "✓ " if self.config["animation_style"] == style else ""
+            row.append({
+                "text": f"{current}{name}",
+                "callback": self._set_style,
+                "args": (style,),
+            })
+            if len(row) == 2:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+        
+        buttons.append([{"text": "🔙 Назад", "callback": self._back_to_main}])
+        
+        await call.edit(
+            "🎨 <b>Выберите стиль анимации:</b>",
+            reply_markup=buttons,
+        )
+
+    async def _set_style(self, call: InlineCall, style: str):
+        """Установить стиль"""
+        self.config["animation_style"] = style
+        await self._back_to_main(call)
+
+    async def _speed_menu(self, call: InlineCall):
+        """Меню настройки скорости"""
+        speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0]
+        
+        buttons = []
+        row = []
+        for speed in speeds:
+            current = "✓ " if self.config["speed_multiplier"] == speed else ""
+            row.append({
+                "text": f"{current}{speed}x",
+                "callback": self._set_speed,
+                "args": (speed,),
+            })
+            if len(row) == 3:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+        
+        buttons.append([{"text": "🔙 Назад", "callback": self._back_to_main}])
+        
+        await call.edit(
+            "⚡ <b>Выберите множитель скорости:</b>",
+            reply_markup=buttons,
+        )
+
+    async def _set_speed(self, call: InlineCall, speed: float):
+        """Установить скорость"""
+        self.config["speed_multiplier"] = speed
+        await self._back_to_main(call)
+
+    async def _delay_menu(self, call: InlineCall):
+        """Меню настройки задержки"""
+        delays = [0.1, 0.2, 0.3, 0.5, 0.7, 1.0]
+        
+        buttons = []
+        row = []
+        for delay in delays:
+            current = "✓ " if self.config["frame_delay"] == delay else ""
+            row.append({
+                "text": f"{current}{delay}с",
+                "callback": self._set_delay,
+                "args": (delay,),
+            })
+            if len(row) == 3:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+        
+        buttons.append([{"text": "🔙 Назад", "callback": self._back_to_main}])
+        
+        await call.edit(
+            "⏱ <b>Выберите задержку между кадрами:</b>",
+            reply_markup=buttons,
+        )
+
+    async def _set_delay(self, call: InlineCall, delay: float):
+        """Установить задержку"""
+        self.config["frame_delay"] = delay
+        await self._back_to_main(call)
+
+    async def _toggle_loop(self, call: InlineCall):
+        """Переключить зацикливание"""
+        self.config["loop_animation"] = not self.config["loop_animation"]
+        await self._back_to_main(call)
+
+    async def _preview_callback(self, call: InlineCall):
+        """Превью текущего стиля"""
+        style = self.config["animation_style"]
+        frames = self._get_frames("Demo!", False, style)
+        
+        for frame in frames[:8]:
+            try:
+                await call.edit(
+                    f"🎬 <b>Превью стиля</b> <code>{style}</code>\n\n{frame}",
+                    reply_markup=[[{"text": "⏹ Стоп", "callback": self._back_to_main}]],
+                )
+                await asyncio.sleep(0.3)
+            except:
+                pass
+        
+        await asyncio.sleep(0.5)
+        await self._back_to_main(call)
+
+    async def _back_to_main(self, call: InlineCall):
+        """Вернуться в главное меню"""
+        await call.edit(
+            self._get_settings_text(),
+            reply_markup=self._get_settings_markup(),
+        )
+
+    async def _close_settings(self, call: InlineCall):
+        """Закрыть настройки"""
+        await call.delete()
